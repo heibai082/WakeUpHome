@@ -1,0 +1,107 @@
+<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<script src='https://cdn.tailwindcss.com'></script><script src="https://unpkg.com/html5-qrcode"></script>
+<script>tailwind.config={darkMode:'class'}</script>
+<style>
+  #sidebar{transition:0.3s} @media(max-width:768px){.h-m{transform:translateX(-100%)}} .active{background:#1e40af;border-left:4px solid #60a5fa}
+  @keyframes rFlsh { 0%, 100% { border-color:#ef4444; background:#fff1f2; } 50% { border-color:#f87171; background:#ffe4e6; } }
+  .expiring { animation: rFlsh 2s infinite; border-width: 2.3px !important; }
+  .dark .expiring { animation: none; border-color: #ef4444 !important; background: #450a0a !important; }
+</style></head>
+<body class='bg-slate-50 dark:bg-slate-950 flex h-screen text-slate-800 dark:text-slate-200' id='app-body'>
+<div id='scan-modal' class='fixed inset-0 bg-black z-[100] hidden flex flex-col'><div class='flex justify-between p-4 bg-slate-900 text-white shadow-lg'><span class='font-bold'>📷 扫码大脑运行中</span><button onclick='stopScan()' class='bg-red-600 px-6 py-2 rounded-xl'>退出</button></div><div id='reader' class='flex-1'></div></div>
+<div id='edit-modal' class='fixed inset-0 bg-black/50 z-[100] hidden flex items-center justify-center p-4'><div class='bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl p-8 shadow-2xl'>
+    <h3 class='text-xl font-bold mb-6'>✍️ 精准修改物资</h3>
+    <div class='space-y-4'><input id='e-name' placeholder='名称' class='w-full border dark:border-slate-700 dark:bg-slate-800 p-4 rounded-2xl'><div class='flex gap-4 items-center'>数量 <input id='e-qty' type='number' class='flex-1 border dark:border-slate-700 dark:bg-slate-800 p-4 rounded-2xl'> 预警 <input id='e-lead' type='number' class='w-20 border dark:border-slate-700 dark:bg-slate-800 p-4 rounded-2xl'></div><div class='flex gap-4'>生产 <input id='e-prod' type='date' class='flex-1 border dark:border-slate-700 dark:bg-slate-800 p-4 rounded-2xl'> 过期 <input id='e-expire' type='date' class='flex-1 border dark:border-slate-700 dark:bg-slate-800 p-4 rounded-2xl'></div></div>
+    <div class='flex gap-4 mt-8'><button onclick='saveEdit()' class='flex-1 bg-blue-600 text-white py-4 rounded-2xl font-bold'>保存修改</button><button onclick='document.getElementById("edit-modal").classList.add("hidden")' class='flex-1 bg-slate-100 dark:bg-slate-800 py-4 rounded-2xl'>取消</button></div>
+</div></div>
+
+<div class='fixed top-0 w-full bg-slate-900 h-16 flex justify-between items-center px-6 z-50 shadow-xl'><div class='flex items-center gap-4 text-white'><button onclick='tgl()' class='md:hidden'>☰</button><div class='font-bold italic text-blue-400 app-title'>杰作版</div></div><div onclick="go('set')" class='w-10 h-10 bg-blue-600 rounded-full border-2 border-slate-700 cursor-pointer overflow-hidden' id='t-av'>A</div></div>
+<div id='sidebar' class='fixed md:relative z-40 w-72 bg-slate-900 text-white flex flex-col h-screen h-m md:transform-none pt-16 shadow-2xl overflow-y-auto'>
+  <nav class='flex-1 p-4 space-y-2' id='tree'></nav>
+  <div class='p-4 border-t border-slate-800 space-y-1 bg-slate-900'>
+    <button onclick='catAct("add",0)' class='w-full bg-slate-800 py-3 rounded-lg text-blue-300 font-bold mb-2 shadow-inner'>+ 添加新大类</button>
+    <div onclick="go('logs')" class='p-3 rounded-lg cursor-pointer hover:bg-slate-800 text-green-400 font-bold'>📄 系统运行日志</div>
+    <div onclick="go('set')" class='p-3 rounded-lg cursor-pointer hover:bg-slate-800 text-orange-400 font-bold'>⚙️ 系统设置中心</div>
+    <div class='mt-2 py-1 text-center bg-slate-800 rounded-full text-slate-500 text-[10px] border border-slate-700'>v0.0.735 杰作锚定版</div>
+  </div>
+</div>
+<div class='flex-1 p-4 md:p-10 overflow-auto mt-16 shadow-inner' id='box'></div>
+<script>
+  let cats=[]; let curId=null; let editingId=null; let bc_val=''; let hq=null;
+  async function load(){ 
+    const r=await fetch('/api/categories'); cats=await r.json(); render();
+    const cfg=await(await fetch('/api/config')).json();
+    document.querySelectorAll('.app-title').forEach(e=>e.innerText=cfg.app_name); document.title=cfg.app_name;
+    applyTheme(cfg.theme_mode || 'system');
+    const ur=await fetch('/api/users'); const me=(await ur.json()).find(u=>u.username==='admin');
+    if(me && me.avatar_url) document.getElementById('t-av').innerHTML=`<img src='${me.avatar_url}' class='w-full h-full object-cover'>`;
+    document.getElementById('box').innerHTML=`<div class='text-center py-20 text-slate-300 dark:text-slate-600 italic'>⛩️ v0.0.735 杰作已锚定，权柄已锁定。</div>`;
+  }
+  function applyTheme(mode){
+    const h=document.documentElement; if(mode==='dark') h.classList.add('dark');
+    else if(mode==='light') h.classList.remove('dark');
+    else { if(window.matchMedia('(prefers-color-scheme: dark)').matches) h.classList.add('dark'); else h.classList.remove('dark'); }
+  }
+  function tgl(){ document.getElementById('sidebar').classList.toggle('h-m'); }
+  function render(){ 
+    const nav=document.getElementById('tree'); const roots=cats.filter(c=>c.parent_id===0);
+    nav.innerHTML=roots.map(r=>{ const subs=cats.filter(s=>s.parent_id===r.id);
+      return `<div class='mb-2 group'><div class='flex items-center justify-between p-3 hover:bg-slate-800 rounded cursor-pointer'><span onclick='view(${r.id},true)' id='m-${r.id}' class='font-bold flex-1'>${r.name}</span><button onclick='catAct("del",${r.id})' class='text-red-500 text-xs hover:scale-125 transition-all'>🗑️</button></div><div class='ml-4 border-l border-slate-700'>${subs.map(s=>`<div class='flex items-center justify-between p-2 hover:text-blue-400 cursor-pointer group/sub'><span onclick='view(${s.id},false)' id='s-${s.id}' class='flex-1'>- ${s.name}</span><button onclick='catAct("del",${s.id})' class='text-red-500 text-[10px] hover:scale-125'>🗑️</button></div>`).join('')}<div onclick='catAct("add",${r.id})' class='p-2 text-slate-500 italic cursor-pointer hover:text-blue-300'>+ 新增小类</div></div></div>`;
+    }).join('');
+  }
+  async function view(id, isRoot){
+    curId=id; document.querySelectorAll('[id^="m-"],[id^="s-"]').forEach(e=>e.classList.remove('active'));
+    if(document.getElementById((isRoot?'m-':'s-')+id)) document.getElementById((isRoot?'m-':'s-')+id).classList.add('active');
+    const b=document.getElementById('box'); const cat=cats.find(c=>c.id===id); const subOpts = cats.filter(s=>s.parent_id===id).map(s=>`<option value='${s.id}'>${s.name}</option>`).join('');
+    b.innerHTML=`<h2 class='text-2xl font-bold mb-6 italic'>📍 ${cat.name}</h2>
+      <div class='bg-white dark:bg-slate-900 p-6 rounded-3xl border dark:border-slate-800 mb-6 shadow-sm'><div class='flex gap-4 mb-4'><input id='in' placeholder='扫描或输入' class='flex-1 border dark:border-slate-700 dark:bg-slate-800 p-4 rounded-2xl'><button onclick='startS()' class='bg-orange-500 text-white px-8 rounded-2xl font-bold active:scale-95'>📷 扫码</button></div>
+        <div class='flex flex-wrap gap-4 items-end'>${isRoot?`<div class='flex-1 min-w-[150px]'>分流<select id='target-cat' class='w-full border dark:border-slate-700 dark:bg-slate-800 p-4 rounded-2xl'>${subOpts}</select></div>`:''}<div class='w-24'>数量<input id='iq' type='number' value='1' class='w-full border dark:border-slate-700 dark:bg-slate-800 p-4 rounded-2xl text-center'></div><div class='flex-1'>过期期<input id='ie' type='date' class='w-full border dark:border-slate-700 dark:bg-slate-800 p-4 rounded-2xl'></div><div class='w-28'>预警<input id='il' type='number' value='3' class='w-full border dark:border-slate-700 dark:bg-slate-800 p-4 rounded-2xl text-center shadow-inner'></div><button onclick='addItem(${isRoot})' class='bg-blue-600 text-white px-10 py-4 rounded-2xl font-bold active:scale-95 shadow-xl'>入库</button></div>
+      </div><div id='ls' class='space-y-4'>正在提取清单...</div>`;
+    const r=await fetch('/api/items?cat_id='+id); const d=await r.json(); const today = new Date();
+    const groups = d.reduce((acc, i) => { acc[i.name] = acc[i.name] || []; acc[i.name].push(i); return acc; }, {});
+    document.getElementById('ls').innerHTML = Object.keys(groups).map(name => {
+        const batchList = groups[name]; const totalQty = batchList.reduce((sum, b) => sum + b.qty, 0);
+        return `<div class='bg-white dark:bg-slate-900 rounded-2xl border dark:border-slate-800 shadow-sm overflow-hidden mb-4'>
+          <div class='p-5 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 border-b dark:border-slate-800 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-all' onclick='this.nextElementSibling.classList.toggle("hidden")'>
+            <span class='font-bold text-lg'>${name} <small class='text-blue-500 bg-blue-50 dark:bg-blue-900/30 px-2 py-1 rounded-full ml-2'>共 ${totalQty} 个</small></span>
+            <span class='text-slate-400 text-sm italic'>点击查看明细 ▾</span>
+          </div>
+          <div class='hidden'>
+            ${batchList.map(i => {
+                const diff = Math.ceil((new Date(i.expire_date)-today)/86400000); const isEx = diff<=i.notify_lead_days && diff>=0;
+                return `<div class='p-4 flex justify-between items-center border-b dark:border-slate-800 last:border-0 ${isEx?"expiring":""}'>
+                  <div class='text-sm'><span class='font-bold'>到期: ${i.expire_date}</span> <small class='text-orange-600 font-bold'>(提前${i.notify_lead_days}天预警)</small><br><small class='text-slate-400 dark:text-slate-500'>变动轨迹: ${i.created_at}</small></div>
+                  <div class='flex items-center gap-4'><button onclick='itemAct("reduce",${i.id})' class='bg-orange-100 dark:bg-orange-900/30 text-orange-600 px-3 py-1 rounded-lg font-bold'>-1</button><span class='text-xl font-bold'>${i.qty}</span>
+                    <button onclick='openEdit(${JSON.stringify(i)})' class='bg-blue-50 dark:bg-blue-900/30 text-blue-600 px-3 py-1 rounded-lg font-bold hover:bg-blue-600 hover:text-white transition-all'>✍️ 修改</button><button onclick='itemAct("del",${i.id})' class='text-red-500'>🗑️</button></div>
+                </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+    }).join('');
+  }
+  function openEdit(item){ editingId=item.id; document.getElementById('e-name').value=item.name; document.getElementById('e-qty').value=item.qty; document.getElementById('e-prod').value=item.prod_date; document.getElementById('e-expire').value=item.expire_date; document.getElementById('e-lead').value=item.notify_lead_days; document.getElementById('edit-modal').classList.remove('hidden'); }
+  async function saveEdit(){ const d={act:'edit',id:editingId,name:document.getElementById('e-name').value,qty:document.getElementById('e-qty').value,prod:document.getElementById('e-prod').value,expire:document.getElementById('e-expire').value,lead:document.getElementById('e-lead').value}; await fetch('/api/items/manage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); document.getElementById('edit-modal').classList.add('hidden'); view(curId, false); }
+  async function itemAct(act, id){ if(act==='del' && !confirm('物理移除批次？')) return; await fetch('/api/items/manage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({act,id})}); view(curId, false); }
+  async function addItem(isRoot){ const tid=isRoot?document.getElementById('target-cat').value:curId; if(!tid)return alert('先选小类'); const d={cat_id:tid,name:document.getElementById('in').value,qty:document.getElementById('iq').value,expire:document.getElementById('ie').value,lead:document.getElementById('il').value,bc:bc_val}; await fetch('/api/add_item',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); bc_val=''; view(curId, isRoot); }
+  async function catAct(act, id){ if(act==='del' && !confirm('彻底物理清空分类及级联物资？')) return; let n=''; if(act==='add'){ n=prompt('大类全称:'); if(!n)return; } await fetch('/api/categories/manage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({act,id,name:n,p_id:id})}); location.reload(); }
+  async function go(type){ 
+    const b=document.getElementById('box'); if(type==='logs'){ 
+        const r=await(await fetch('/api/logs')).json();
+        b.innerHTML=`<h2 class='text-2xl font-bold mb-6 italic'>📄 系统运行双轨日志</h2><div class='mb-2 text-xs text-green-600 font-bold'>✅ 运行轨迹历史</div><pre class='bg-slate-900 text-green-400 p-4 rounded-xl mb-4 text-xs h-[30vh] overflow-auto shadow-inner'>${r.success}</pre><div class='mb-2 text-xs text-red-600 font-bold'>❌ 报警日志记录</div><pre class='bg-slate-900 text-red-400 p-4 rounded-xl text-xs h-[30vh] overflow-auto shadow-inner'>${r.error}</pre>`;
+    } else if(type==='set'){ const cfg=await(await fetch('/api/config')).json(); const us=await(await fetch('/api/users')).json();
+        b.innerHTML=`<h2 class='text-2xl font-bold mb-6 italic'>⚙️ 系统设置中心</h2>
+          <div class='bg-blue-50 dark:bg-slate-900 p-6 rounded-3xl border dark:border-slate-800 mb-6'><h3 class='font-bold mb-4 text-blue-800 dark:text-blue-400 text-lg'>🎨 杰作版·个性化设置</h3>
+            <div class='flex gap-4 items-center mb-6'>模式切换：<select id='t-mode' onchange='svCf("theme_mode", this.value); applyTheme(this.value)' class='border dark:border-slate-700 dark:bg-slate-800 p-3 rounded-2xl'><option value='light' ${cfg.theme_mode==='light'?'selected':''}>☀️ 浅色 (Light)</option><option value='dark' ${cfg.theme_mode==='dark'?'selected':''}>🌙 深色 (Dark)</option><option value='system' ${cfg.theme_mode==='system'?'selected':''}>🌓 跟随系统</option></select></div>
+            <div class='flex gap-4 items-center mb-4'>系统名称：<input id='s-name' value='${cfg.app_name}' class='border dark:border-slate-700 dark:bg-slate-800 p-3 rounded-2xl flex-1'><button onclick='svCf("app_name")' class='bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold'>确认改名</button></div>
+            <input id='w-url' value='${cfg.webhook_url}' placeholder='Lucky Webhook URL' class='w-full border dark:border-slate-700 dark:bg-slate-800 p-4 rounded-2xl mb-4'><div class='flex gap-4 items-center'>推送时间 <input id='rep-time' type='time' value='${cfg.report_time}' class='border dark:border-slate-700 dark:bg-slate-800 p-3 rounded-2xl'><button onclick='svCf("full")' class='bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold active:scale-95 shadow-lg'>固化配置</button><button onclick='testRecap()' class='bg-orange-500 text-white px-6 py-3 rounded-2xl font-bold active:scale-95 shadow-lg'>🚀 测试推送</button></div></div>
+          <div class='bg-white dark:bg-slate-900 p-6 rounded-3xl border dark:border-slate-800'><h3 class='font-bold mb-4'>👥 管理员权限</h3><div class='flex gap-2 mb-4'><input id='un' placeholder='账号' class='border dark:border-slate-700 dark:bg-slate-800 p-2 rounded flex-1 shadow-inner'><button onclick='uM("add")' class='bg-slate-800 text-white px-4 py-2 rounded font-bold shadow-lg'>创建</button></div><div class='space-y-2'>${us.map(u=>`<div class='bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border dark:border-slate-800 flex justify-between items-center'><span><b>${u.username}</b></span><div class='flex gap-2'>${u.username!=='admin'?`<button onclick='uM("del",${u.id})' class='text-red-600 text-xs font-bold'>级联删除</button>`:'-'}</div></div>`).join('')}</div></div>`;
+    }
+  }
+  async function svCf(k,v){ if(k==='app_name') v=document.getElementById('s-name').value; else if(k==='full'){ await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:'webhook_url',val:document.getElementById('w-url').value})}); await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:'report_time',val:document.getElementById('rep-time').value})}); return alert('固化成功'); }
+    await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k,val:v})}); if(k==='app_name') location.reload(); }
+  async function testRecap(){ const r=await(await fetch('/api/recap/test')).json(); alert("推送指令已出！\n系统名："+r.app_name+"\n摘要：\n"+r.msg); }
+  async function uM(act,id){ const d={act,id}; if(act==='add'){d.username=document.getElementById('un').value;} await fetch('/api/users/manage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); go('set'); }
+  async function startS(){ document.getElementById('scan-modal').classList.remove('hidden'); hq=new Html5Qrcode("reader"); hq.start({ facingMode: "environment" }, { fps: 15, qrbox: 250 }, async (code) => { bc_val=code; const r=await(await fetch('/api/barcode/'+code)).json(); document.getElementById('in').value=r.name || ""; stopScan(); }); }
+  function stopScan(){ if(hq) hq.stop().finally(()=>{ document.getElementById('scan-modal').classList.add('hidden'); }); }
+  load();
+</script></body></html>

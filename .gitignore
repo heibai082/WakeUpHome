@@ -1,0 +1,7 @@
+db/data.db
+logs/*.log
+__pycache__/
+*.pyc
+venv/
+.DS_Store
+Anchor_*.tar.gz
